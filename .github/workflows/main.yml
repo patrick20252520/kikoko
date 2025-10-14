@@ -1,0 +1,298 @@
+name: RDP
+on:
+  workflow_dispatch:
+jobs:
+  secure-rdp:
+    runs-on: windows-2025
+    timeout-minutes: 3600
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Ownership Verification
+        run: Write-Host "ToolboxLab.xyz - RDP Workflow Ready"
+
+      - name: Create Directories
+        run: |
+          New-Item -Path "D:\link subscribe youtube channel" -ItemType Directory -Force
+          New-Item -Path "D:\Script" -ItemType Directory -Force
+          Write-Host "Directories created"
+
+      - name: Configure RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          $password = "admin@123"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          if (-not (Get-LocalUser -Name "TOOLBOXLAP" -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name "TOOLBOXLAP" -Password $securePass -AccountNeverExpires
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member "TOOLBOXLAP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "TOOLBOXLAP" -ErrorAction SilentlyContinue
+
+      - name: Install Tor Browser
+        run: |
+          if (Test-Path ".\tor-browser-windows-x86_64-portable-14.5.6.exe") {
+              Copy-Item ".\tor-browser-windows-x86_64-portable-14.5.6.exe" "$env:TEMP\tor-installer.exe"
+              Start-Process -FilePath "$env:TEMP\tor-installer.exe" -ArgumentList "/S", "/D=C:\Tor Browser" -Wait
+              Write-Host "Tor Browser installed from local file"
+          } else {
+              Write-Host "Tor Browser file not found, downloading..."
+              $torUrl = "https://dist.torproject.org/torbrowser/14.0.3/tor-browser-windows-x86_64-portable-14.0.3.exe"
+              $torPath = "$env:TEMP\tor-installer.exe"
+              Invoke-WebRequest -Uri $torUrl -OutFile $torPath
+              Start-Process -FilePath $torPath -ArgumentList "/S", "/D=C:\Tor Browser" -Wait
+              Write-Host "Tor Browser downloaded and installed"
+          }
+
+      - name: Install Python Dependencies Only
+        run: |
+          Write-Host "Installing Python packages (Python already available)..."
+          python -m pip install --upgrade pip
+          python -m pip install selenium selenium-wire requests pysocks stem "blinker<1.4"
+          Write-Host "Python dependencies installed successfully"
+
+      - name: Copy Scripts from Repository
+        run: |
+          # Copy existing scripts from repository if they exist
+          if (Test-Path ".\FINAL_3_WINDOWS_TRUSTWORTHY.py") {
+              Copy-Item ".\FINAL_3_WINDOWS_TRUSTWORTHY.py" "D:\Script\" -Force
+              Write-Host "FINAL_3_WINDOWS_TRUSTWORTHY.py copied from repo"
+          }
+          if (Test-Path ".\FINAL_3_WINDOWS_TRUSTWORTHY-original.py") {
+              Copy-Item ".\FINAL_3_WINDOWS_TRUSTWORTHY-original.py" "D:\Script\" -Force
+              Write-Host "FINAL_3_WINDOWS_TRUSTWORTHY-original.py copied from repo"
+          }
+          if (Test-Path ".\usa_residential_gui.py") {
+              Copy-Item ".\usa_residential_gui.py" "D:\Script\" -Force
+              Write-Host "usa_residential_gui.py copied from repo"
+          }
+
+      - name: Create Missing Scripts
+        run: |
+          # Only create scripts if they don't exist from repo
+          if (-not (Test-Path "D:\Script\FINAL_3_WINDOWS_TRUSTWORTHY.py")) {
+              $script1 = @'
+import time
+import json
+from selenium.webdriver.chrome.options import Options
+from seleniumwire import webdriver as wire_webdriver
+
+def launch_trustworthy_profile(name, gpu, seed, port, window_x=50, window_y=50):
+    print(f"Lancement: {name} (GPU: {gpu}, Port: {port})")
+    
+    chrome_options = Options()
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument(f"--user-data-dir=C:/temp/trustworthy_{name}")
+    chrome_options.add_argument(f"--window-position={window_x},{window_y}")
+    chrome_options.add_argument("--window-size=1200,800")
+    
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    
+    chrome_options.add_argument("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
+    chrome_options.add_argument("--enforce-webrtc-ip-permission-check")
+    chrome_options.add_experimental_option("prefs", {
+        "webrtc.ip_handling_policy": "disable_non_proxied_udp",
+        "webrtc.multiple_routes_enabled": False,
+        "webrtc.nonproxied_udp_enabled": False
+    })
+    
+    tor_username = f"root-{port}"
+    proxy_options = {
+        "proxy": {
+            "http": f"socks5://{tor_username}:WelcomeatTor@127.0.0.1:{port}",
+            "https": f"socks5://{tor_username}:WelcomeatTor@127.0.0.1:{port}",
+            "no_proxy": "localhost,127.0.0.1"
+        }
+    }
+    
+    print(f"Proxy: socks5://root-{port}:WelcomeatTor@127.0.0.1:{port}")
+    driver = wire_webdriver.Chrome(options=chrome_options, seleniumwire_options=proxy_options)
+    
+    script = """
+(() => {
+  try {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    const badKeys = [/^(?:_?cdc_|__webdriver|selenium|webdriver|__driver)/i];
+    for (const k of Object.keys(window)) {
+      if (badKeys.some(r=>r.test(k))) { try { delete window[k]; } catch(e) {} }
+    }
+  } catch(e) {}
+  console.log("Script loaded");
+})();
+"""
+    
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": script})
+    driver.get("https://iphey.com/")
+    time.sleep(3)
+    
+    print(f"{name} ready!")
+    return driver
+
+def main():
+    print("MULTI-PROFILS TRUSTWORTHY - Proxy Residentiel USA")
+    print("Format SOCKS5: socks5://root-{port}:WelcomeatTor@127.0.0.1:{port}")
+    
+    profiles = [
+        {"name": "USA_Profile_1", "gpu": "nvidia", "seed": 12345, "port": 65237},
+        {"name": "USA_Profile_2", "gpu": "intel", "seed": 67890, "port": 65238},
+        {"name": "USA_Profile_3", "gpu": "amd", "seed": 54321, "port": 65239}
+    ]
+    
+    browsers = []
+    
+    for i, profile in enumerate(profiles):
+        try:
+            window_x = 50 + i * 50
+            window_y = 50 + i * 100
+            
+            driver = launch_trustworthy_profile(
+                profile["name"], 
+                profile["gpu"], 
+                profile["seed"], 
+                profile["port"],
+                window_x,
+                window_y
+            )
+            
+            browsers.append({"driver": driver, "name": profile["name"]})
+            
+            if i < len(profiles) - 1:
+                print("Attente 10 secondes...")
+                time.sleep(10)
+                
+        except Exception as e:
+            profile_name = profile["name"]
+            print(f"Erreur {profile_name}: {e}")
+    
+    print(f"{len(browsers)} fenetre(s) lancee(s)")
+    print("Verifiez les IPs residentielles sur iphey.com")
+    
+    input("Appuyez sur Entree pour fermer...")
+    
+    for b in browsers:
+        try:
+            b["driver"].quit()
+        except:
+            pass
+
+if __name__ == "__main__":
+    main()
+'@
+              $script1 | Out-File -FilePath "D:\Script\FINAL_3_WINDOWS_TRUSTWORTHY.py" -Encoding UTF8
+              Write-Host "FINAL_3_WINDOWS_TRUSTWORTHY.py created"
+          }
+
+      - name: Create Desktop Launchers
+        run: |
+          # Wait for user profile
+          Start-Sleep -Seconds 5
+          
+          # Ensure desktop directory exists
+          $desktopPath = "C:\Users\TOOLBOXLAP\Desktop"
+          if (-not (Test-Path $desktopPath)) {
+              New-Item -Path $desktopPath -ItemType Directory -Force
+          }
+          
+          # Create batch files for easy access
+          $batch1 = @'
+@echo off
+cd /d "D:\Script"
+python "FINAL_3_WINDOWS_TRUSTWORTHY.py"
+pause
+'@
+          
+          $batch2 = @'
+@echo off
+cd /d "D:\Script"
+python "usa_residential_gui.py"
+pause
+'@
+          
+          $batch3 = @'
+@echo off
+cd /d "D:\Script"
+python "FINAL_3_WINDOWS_TRUSTWORTHY-original.py"
+pause
+'@
+          
+          $torBatch = @'
+@echo off
+cd /d "C:\Tor Browser\Browser"
+start firefox.exe
+'@
+          
+          $batch1 | Out-File -FilePath "$desktopPath\TRUSTWORTHY Script.bat" -Encoding ASCII
+          $batch2 | Out-File -FilePath "$desktopPath\USA Residential GUI.bat" -Encoding ASCII
+          $batch3 | Out-File -FilePath "$desktopPath\TRUSTWORTHY Original.bat" -Encoding ASCII
+          $torBatch | Out-File -FilePath "$desktopPath\Tor Browser.bat" -Encoding ASCII
+          
+          Write-Host "Desktop launchers created"
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Connect Tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned"
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Verify RDP
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "RDP connection test failed"
+              exit 1
+          }
+          Write-Host "RDP connectivity verified"
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "=== RDP ACCESS READY ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: TOOLBOXLAP"
+          Write-Host "Password: admin@123"
+          Write-Host "========================="
+          Write-Host ""
+          Write-Host "Desktop Files Available:"
+          Write-Host "- TRUSTWORTHY Script.bat (Multi-browser automation)"
+          Write-Host "- TRUSTWORTHY Original.bat (Original script)"
+          Write-Host "- USA Residential GUI.bat (Proxy interface)"
+          Write-Host "- Tor Browser.bat (Tor launcher)"
+          Write-Host ""
+          Write-Host "Files in D:\Script\"
+          Get-ChildItem "D:\Script\" | ForEach-Object { Write-Host "  - $($_.Name)" }
+          Write-Host ""
+          Write-Host "System 100% ready for use!"
+          Write-Host ""
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C to terminate"
+              Start-Sleep -Seconds 300
+          }
